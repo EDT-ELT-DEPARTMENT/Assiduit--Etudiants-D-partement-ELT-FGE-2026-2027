@@ -35,7 +35,7 @@ NOM_SOURCE = "dataEDT-ELT-S2-2026.xlsx"
 FILE_EMAILS = "Permanents-Vacataires-ELT2-2025-2026.xlsx"
 FILE_DATA_A = "DATA-ASSUIDUITE-2026.xlsx"
 FILE_LISTE_A = "Liste des étudiants-2025-2026.xlsx"
-FILE_MATRICULES = "Mtricules-ELT-2026-2027.xlsx" # Fichier d'authentification à 4 colonnes
+FILE_MATRICULES = "Mtricules-ELT-2026-2027.xlsx" # Fichier d'authentification multi-colonnes
 
 COLS_ORDRE = ['Enseignements', 'Code', 'Enseignants', 'Horaire', 'Jours', 'Lieu', 'Promotion']
 
@@ -214,12 +214,12 @@ def generer_page_html_telechargeable(df_data, titre_bilan, colonnes, entetes):
 
 
 # ======================================================================================
-# 4. PASSERELLE DE VÉRIFICATION D'IDENTITÉ SÉCURISÉE (MATRICULE + OTP)
+# 4. PASSERELLE DE VÉRIFICATION D'IDENTITÉ SÉCURISÉE (MATRICULE + NOM + PRÉNOM + OTP)
 # ======================================================================================
 if "auth_ok" not in st.session_state:
     st.session_state.auth_ok = False
     st.session_state.auth_role = None  # 'etudiant' ou 'enseignant_admin'
-    st.session_state.auth_user = None  # Contient les coordonnées de l'étudiant identifié
+    st.session_state.auth_user = None  # Contient les coordonnées sauvegardées de l'étudiant
     st.session_state.otp_code = None
     st.session_state.otp_sent = False
     st.session_state.temp_matricule = ""
@@ -229,59 +229,72 @@ if not st.session_state.auth_ok:
     
     mode_connexion = st.radio(
         "Sélectionnez votre profil d'accès :", 
-        ["Espace Étudiant (Validation par Matricule + Code Unique Email)", "Espace Enseignant / Administration"], 
+        ["Espace Étudiant (Validation par Identité Complète + Code Unique Email)", "Espace Enseignant / Administration"], 
         horizontal=True
     )
     st.divider()
 
     if "Espace Étudiant" in mode_connexion:
         st.subheader("🎓 Identification de l'Étudiant")
-        st.info("Saisissez votre matricule officiel tel qu'il apparaît sur votre carte d'étudiant pour recevoir votre clé unique d'accès.")
+        st.info("Saisissez votre matricule, nom, prénom et e-mail pour recevoir votre clé unique d'accès.")
         
-        input_mat = st.text_input("🔢 Matricule de l'Étudiant :", key="input_matricule_auth").strip()
+        input_mat = st.text_input("🔢 Matricule de l'Étudiant (Mat. Etudiant) :", key="input_matricule_auth").strip()
+        input_nom = st.text_input("👤 Nom de famille (en Majuscules) :", key="input_nom_auth").strip()
+        input_prenom = st.text_input("👤 Prénom :", key="input_prenom_auth").strip()
+        input_email = st.text_input("📧 Votre Adresse E-mail (pour l'envoi du code) :", key="input_email_auth").strip()
         
         if st.button("📩 Recevoir mon code unique de vérification", use_container_width=True):
-            if not input_mat:
-                st.error("❌ Le champ Matricule ne peut pas être vide.")
+            if not input_mat or not input_nom or not input_prenom or not input_email:
+                st.error("❌ Tous les champs (Matricule, Nom, Prénom, E-mail) doivent être renseignés.")
+            elif "@" not in input_email:
+                st.error("❌ Saisissez une adresse e-mail valide.")
             else:
                 df_mat = charger_donnees_locales(FILE_MATRICULES)
                 if df_mat.empty:
-                    st.error(f"⚠️ Erreur système : Le fichier de référence '{FILE_MATRICULES}' est introuvable.")
+                    st.error(f"⚠️ Erreur système : Le fichier de référence '{FILE_MATRICULES}' est introuvable ou vide.")
                 else:
-                    # Rendre la recherche insensible à la casse et aux espaces superflus
-                    df_mat.columns = [c.lower().strip() for c in df_mat.columns]
-                    
-                    if 'matricule' in df_mat.columns:
-                        match_student = df_mat[df_mat['matricule'].astype(str).str.strip() == input_mat]
+                    try:
+                        # Alignement des données par position absolue
+                        # Colonne 6 (Index 5) : Mat. Etudiant
+                        mat_series = df_mat.iloc[:, 5].astype(str).str.strip()
+                        # Colonne 8 (Index 7) : Nom
+                        nom_series = df_mat.iloc[:, 7].astype(str).str.strip().str.upper()
+                        # Colonne 9 (Index 8) : Prénom
+                        prenom_series = df_mat.iloc[:, 8].astype(str).str.strip().str.upper()
+                        
+                        # Recherche exacte de la combinaison demandée
+                        match_student = df_mat[
+                            (mat_series == input_mat) & 
+                            (nom_series == input_nom.upper()) & 
+                            (prenom_series == input_prenom.upper())
+                        ]
                         
                         if not match_student.empty:
                             row_student = match_student.iloc[0]
-                            # Extraction des 4 colonnes requises
-                            nom_p = row_student.get('nom & prenom', row_student.get('nom et prénom', 'L\'étudiant')).strip().upper()
-                            promo_s = str(row_student.get('promotion', 'N/A')).strip()
-                            email_s = str(row_student.get('email', '')).strip().lower()
+                            nom_complet_officiel = f"{str(row_student.iloc[7]).strip().upper()} {str(row_student.iloc[8]).strip().title()}"
+                            # Colonne 2 (Index 1) : Promotion
+                            promo_officielle = str(row_student.iloc[1]).strip() if df_mat.shape[1] > 1 else "N/A"
                             
-                            if not email_s or "@" not in email_s:
-                                st.error("❌ Erreur de données : Aucun email valide n'est rattaché à ce matricule.")
-                            else:
-                                # Génération du code de vérification unique
-                                code_gen = str(random.randint(100000, 999999))
-                                st.session_state.otp_code = code_gen
-                                st.session_state.temp_matricule = input_mat
-                                st.session_state.auth_user = {
-                                    "matricule": input_mat,
-                                    "nom_complet": nom_p,
-                                    "promotion": promo_s,
-                                    "email": email_s
-                                }
-                                
-                                envoye = envoyer_email_otp(email_s, nom_p, code_gen)
-                                st.session_state.otp_sent = True
-                                st.success(f"📩 Code de sécurité envoyé à l'adresse sécurisée associée : {email_s[:3]}***@{email_s.split('@')[1]}")
+                            # Génération du code OTP de session
+                            code_gen = str(random.randint(100000, 999999))
+                            st.session_state.otp_code = code_gen
+                            st.session_state.temp_matricule = input_mat
+                            
+                            # Sauvegarde stricte de ses coordonnées comme demandé
+                            st.session_state.auth_user = {
+                                "matricule": input_mat,
+                                "nom_complet": nom_complet_officiel,
+                                "promotion": promo_officielle,
+                                "email": input_email.lower()
+                            }
+                            
+                            envoye = envoyer_email_otp(input_email.lower(), nom_complet_officiel, code_gen)
+                            st.session_state.otp_sent = True
+                            st.success(f"📩 Code de sécurité envoyé à l'adresse e-mail saisie : {input_email}")
                         else:
-                            st.error("❌ Ce matricule n'existe pas dans le fichier source. Veuillez vérifier la saisie.")
-                    else:
-                        st.error("❌ Structure invalide : La colonne 'matricule' est introuvable dans le fichier excel.")
+                            st.error("❌ Aucune correspondance trouvée dans le fichier source pour ce Matricule, Nom et Prénom.")
+                    except Exception as e:
+                        st.error(f"❌ Erreur lors du parsing des colonnes du fichier Matricules : {e}")
         
         if st.session_state.otp_sent:
             st.divider()
@@ -318,7 +331,7 @@ else:
     c_user, c_deco = st.columns([6, 1])
     with c_user:
         if st.session_state.auth_role == "etudiant":
-            st.markdown(f"🎓 Session Active : **{st.session_state.auth_user['nom_complet']}** ({st.session_state.auth_user['promotion']}) | Profil : **Étudiant**")
+            st.markdown(f"🎓 Session Active : **{st.session_state.auth_user['nom_complet']}** ({st.session_state.auth_user['promotion']}) | E-mail rattaché : **{st.session_state.auth_user['email']}** | Profil : **Étudiant**")
         else:
             st.markdown("👤 Session Active : **Enseignant / Administration du département**")
     with c_deco:
@@ -508,7 +521,7 @@ else:
                 col1, col2 = st.columns(2)
                 with col1:
                     if st.session_state.auth_role == "etudiant":
-                        # VERROUILLAGE SÉCURISÉ DES PARAMÈTRES ISSUS DE L'OTP
+                        # VERROUILLAGE SÉCURISÉ DES PARAMÈTRES ISSUS DE L'OTP ET DE L'IDENTIFICATION SOURCE
                         etudiant_select = st.text_input("Nom & Prénom de l'Étudiant :", value=st.session_state.auth_user['nom_complet'], disabled=True)
                         promotion_courante = st.session_state.auth_user['promotion']
                         st.text_input("Filière / Promotion de rattachement :", value=promotion_courante, disabled=True)
