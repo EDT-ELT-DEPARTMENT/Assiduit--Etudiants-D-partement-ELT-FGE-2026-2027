@@ -13,7 +13,7 @@ st.title(TITRE_PLATEFORME)
 # Fonction réelle d'envoi d'e-mail par SMTP
 def envoyer_code_par_email(email_destinataire, code_unique):
     # Configuration du serveur SMTP de Gmail
-    smtp_server = "smtp.gmail.com"
+    smtp_server = "chef.department.elt.fge@gmail.com"
     smtp_port = 587
     
     # Récupération sécurisée des identifiants depuis st.secrets
