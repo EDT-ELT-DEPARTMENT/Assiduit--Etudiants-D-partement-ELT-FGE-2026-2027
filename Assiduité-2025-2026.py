@@ -25,7 +25,7 @@ hide_st_style = """
 st.markdown(hide_st_style, unsafe_allow_html=True)
 
 # --- TITRE INSTITUTIONNEL REQUIS ---
-TITLE_PLATFORM = "Plateforme de gestion d'assiduité-S2-2026-2027-Département d'Électrotechnique-Faculté de génie électrique-UDL-SBA"
+TITLE_PLATFORM = "Plateforme de gestion d'assiduité-2026-2027-Département d'Électrotechnique-Faculté de génie électrique-UDL-SBA"
 st.title(TITLE_PLATFORM)
 
 # ======================================================================================
